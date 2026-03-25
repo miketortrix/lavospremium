@@ -5,7 +5,7 @@ import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { 
   LayoutDashboard, Users, ClipboardList, Flame, 
   Droplets, DollarSign, AlertCircle, 
-  Plus, CheckCircle, Trash2, Settings, BarChart3, PieChart, Search, Cloud, ChevronRight, Minus, LogOut, Lock, TrendingUp, TrendingDown, Store, ArrowUpCircle, ArrowDownCircle, MapPin, UserCheck, Package, ShoppingCart, ShoppingBag
+  Plus, CheckCircle, Trash2, Settings, BarChart3, PieChart, Search, Cloud, ChevronRight, Minus, LogOut, Lock, TrendingUp, TrendingDown, Store, ArrowUpCircle, ArrowDownCircle, MapPin, UserCheck, Package, ShoppingCart, ShoppingBag, Download
 } from 'lucide-react';
 
 // ==========================================================
@@ -59,7 +59,7 @@ function LavOSMain() {
   const [_clients, _setClients] = useState<any[]>([]);
   const [_servicesConfig, _setServicesConfig] = useState<any[]>([]);
   const [_orders, _setOrders] = useState<any[]>([]);
-  const [_dryers, _setDryers] = useState<any[]>([]); // NUEVO ESTADO SECADORAS
+  const [_dryers, _setDryers] = useState<any[]>([]);
   const [_gasCylinders, _setGasCylinders] = useState<any[]>([]);
   const [_supplies, _setSupplies] = useState<any[]>([]);
   const [_employees, _setEmployees] = useState<any[]>([]);
@@ -157,6 +157,8 @@ function LavOSMain() {
   // --- LÓGICA DE FILTRADO ---
   const isDateInRange = (dateStr: string, filter = dateFilter) => {
     if (!dateStr || filter.type === 'historico') return true;
+    if (filter.type === 'custom') return dateStr === filter.specificDate;
+    
     const d = new Date(dateStr + 'T12:00:00'); 
     const t = new Date(); t.setHours(12, 0, 0, 0);
     switch (filter.type) {
@@ -344,6 +346,23 @@ function LavOSMain() {
     showMsg(`Bodega actualizada y -Q${cost} registrado en caja`, false);
   };
 
+  // NUEVO: Descarga de Reportes CSV
+  const handleDownloadCSV = () => {
+    vibrate();
+    const headers = ['Fecha', 'Tipo', 'Categoria', 'Monto', 'Descripcion'];
+    const rows = filteredTransactions.map(t => `${t.date},${t.type},${t.category},${t.amount},"${t.desc || ''}"`);
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows].join('\n');
+    
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `Reporte_LavOS_${getLocalDateString()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showMsg("Reporte descargado correctamente", false);
+  };
+
   // --- VISTAS ---
   const renderDashboard = () => {
     const totalIn = filteredTransactions.filter(t => t.type === 'ENTRADA').reduce((s,t) => s + t.amount, 0);
@@ -351,7 +370,7 @@ function LavOSMain() {
     const net = totalIn - totalOut;
 
     return (
-      <div className="space-y-6 pb-24 md:pb-6 animate-in fade-in duration-300">
+      <div className="space-y-6 pb-24 md:pb-6 animate-in fade-in duration-300 w-full">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
           <div className="bg-white p-6 md:p-8 rounded-[2rem] shadow-sm flex flex-col justify-center border border-slate-100/50">
             <p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest">Ingresos Brutos</p>
@@ -396,7 +415,7 @@ function LavOSMain() {
     const selectedClient = _clients.find(c => c.id === orderForm.clientId);
     
     return (
-      <div className="flex flex-col lg:flex-row gap-6 h-full pb-32 md:pb-6 relative animate-in fade-in duration-300">
+      <div className="flex flex-col lg:flex-row gap-6 h-full pb-32 md:pb-6 relative animate-in fade-in duration-300 w-full">
         
         {/* COLUMNA 1: INFO Y CLIENTE */}
         <div className="w-full lg:w-1/3 flex flex-col gap-4">
@@ -479,7 +498,7 @@ function LavOSMain() {
   };
 
   const renderOrdenes = () => (
-    <div className="space-y-6 pb-24 md:pb-8 animate-in fade-in duration-300">
+    <div className="space-y-6 pb-24 md:pb-8 animate-in fade-in duration-300 w-full">
       
       <div className="flex flex-col md:flex-row gap-4 items-center justify-between bg-white p-4 rounded-3xl border border-slate-100 shadow-sm">
         <div className="flex bg-slate-50 p-1.5 rounded-2xl w-full md:w-fit">
@@ -537,7 +556,7 @@ function LavOSMain() {
     const totalOut = filteredTransactions.filter(t => t.type === 'SALIDA').reduce((s,t) => s + t.amount, 0);
 
     return (
-      <div className="space-y-8 pb-32 max-w-5xl mx-auto animate-in fade-in duration-300">
+      <div className="space-y-8 pb-32 animate-in fade-in duration-300 w-full">
          <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-100 shadow-sm gap-6">
             <div><h3 className="text-2xl font-black text-slate-800 tracking-tight">Caja Fuerte / Movimientos</h3><p className="text-sm font-bold text-slate-400 mt-1">Registra pagos manuales, viáticos y proveedores aquí.</p></div>
             <button onClick={() => { vibrate(); setForms(p => ({...p, transaction: { ...p.transaction, category: _txCategories.out[0] || '' }})); toggleModal('transaction'); }} className="w-full md:w-auto bg-slate-900 text-white px-8 py-4 rounded-2xl font-black active:scale-95 transition-transform shadow-lg shadow-slate-300">+ Registrar Acción</button>
@@ -578,9 +597,12 @@ function LavOSMain() {
     const categoriesOut = filteredTransactions.filter(t => t.type === 'SALIDA').reduce((acc, t) => { acc[t.category] = (acc[t.category] || 0) + t.amount; return acc; }, {} as Record<string, number>);
 
     return (
-      <div className="space-y-8 pb-32 max-w-5xl mx-auto animate-in fade-in duration-300">
+      <div className="space-y-8 pb-32 animate-in fade-in duration-300 w-full">
          <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-100 shadow-sm gap-6">
             <div><h3 className="text-2xl font-black text-slate-800 tracking-tight">Estado de Resultados</h3><p className="text-sm font-bold text-slate-400 mt-1">Rentabilidad y desglose por categorías.</p></div>
+            <button onClick={handleDownloadCSV} className="w-full md:w-auto bg-emerald-600 hover:bg-emerald-500 text-white px-8 py-4 rounded-2xl font-black active:scale-95 transition-transform shadow-lg shadow-emerald-200 flex items-center justify-center">
+              <Download className="w-5 h-5 mr-2" /> Exportar CSV
+            </button>
          </div>
 
          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -623,7 +645,7 @@ function LavOSMain() {
   };
 
   const renderInsumos = () => (
-    <div className="space-y-6 pb-24 md:pb-8 animate-in fade-in duration-300">
+    <div className="space-y-6 pb-24 md:pb-8 animate-in fade-in duration-300 w-full">
       <div className="flex bg-white p-1.5 rounded-2xl w-fit shadow-sm border border-slate-100">
         {['insumos', 'gas'].map(t => <button key={t} onClick={() => {vibrate(); setActiveInvTab(t)}} className={`px-8 py-3 rounded-xl font-black capitalize transition-all ${activeInvTab === t ? 'bg-slate-900 text-white shadow-md' : 'text-slate-400 hover:text-slate-600'}`}>{t}</button>)}
       </div>
@@ -634,7 +656,7 @@ function LavOSMain() {
             <h3 className="text-2xl font-black text-slate-800 tracking-tight">Jabones y Químicos</h3>
             <button onClick={() => toggleModal('supply')} className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-3 rounded-xl font-black text-sm active:scale-95 transition-all shadow-md">+ Nuevo Catálogo</button>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
             {_supplies.map(s => (
               <div key={s.id} className={`p-6 rounded-[2rem] border-2 transition-colors flex flex-col ${s.stock <= s.minAlert ? 'bg-rose-50 border-rose-200' : 'bg-slate-50 border-slate-100'}`}>
                 <h4 className="font-black text-xl text-slate-800 leading-tight mb-1">{s.name}</h4>
@@ -671,7 +693,7 @@ function LavOSMain() {
           </div>
 
           {activeGasTab === 'activos' && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
               {_dryers.map(d => {
                 const activeCyl = _gasCylinders.find(g => g.dryerId === d.id && g.status === 'Activo');
                 return (
@@ -738,7 +760,7 @@ function LavOSMain() {
   );
 
   const renderAjustes = () => (
-    <div className="space-y-8 pb-32 max-w-5xl mx-auto animate-in fade-in duration-300">
+    <div className="space-y-8 pb-32 animate-in fade-in duration-300 w-full">
       
       {/* TARJETA DE CATEGORÍAS */}
       <div className="bg-white p-8 md:p-10 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col col-span-1 lg:col-span-2">
@@ -859,7 +881,7 @@ function LavOSMain() {
                 {id:'panel', label: 'Panel', icon: LayoutDashboard, role:['admin']}, 
                 {id:'mostrador', label: 'Caja', icon: Store, role:['admin','employee']}, 
                 {id:'ordenes', label: 'Órdenes', icon: ClipboardList, role:['admin','employee']}, 
-                {id:'finanzas', label: 'Caja Fuerte', icon: DollarSign, role:['admin']},
+                {id:'finanzas', label: 'Caja Fuerte', icon: DollarSign, role:['admin', 'employee']}, // Permiso otorgado a Mostrador (Riesgo bajo tu responsabilidad)
                 {id:'reportes', label: 'Reportes', icon: BarChart3, role:['admin']},
                 {id:'insumos', label: 'Inventario', icon: Flame, role:['admin','employee']}, 
                 {id:'ajustes', label: 'Ajustes', icon: Settings, role:['admin']}
@@ -880,18 +902,26 @@ function LavOSMain() {
           {activeTab !== 'mostrador' && activeTab !== 'ajustes' && (
             <header className="sticky top-0 z-30 bg-slate-50/90 backdrop-blur-md border-b border-slate-200/50 p-4 md:px-10 flex flex-col md:flex-row items-start md:items-center justify-between shrink-0 gap-4">
               <h2 className="font-black text-2xl text-slate-800 capitalize hidden md:flex items-center tracking-tight"><MapPin className="w-5 h-5 mr-2 text-blue-600"/> Morales / {activeTab === 'finanzas' ? 'Caja Fuerte' : activeTab}</h2>
-              <div className="flex bg-white p-1.5 rounded-2xl shadow-sm border border-slate-100 overflow-x-auto no-scrollbar w-full md:w-auto snap-x">
+              <div className="flex bg-white p-1.5 rounded-2xl shadow-sm border border-slate-100 overflow-x-auto no-scrollbar w-full md:w-auto snap-x items-center">
                 {['hoy', 'quincena', 'mes', 'historico'].map(t => (
                   <button key={t} onClick={() => {vibrate(); setDateFilter({...dateFilter, type: t})}} className={`snap-start flex-1 md:flex-none px-5 py-2.5 rounded-xl text-xs md:text-sm font-black transition-all whitespace-nowrap ${dateFilter.type === t ? 'bg-slate-900 text-white shadow-md' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}>
                     {t==='hoy'?'Hoy':t==='quincena'?'Quincena':t==='mes'?'Mes':'Histórico'}
                   </button>
                 ))}
+                <div className="border-l border-slate-200 mx-2 h-6"></div>
+                <input 
+                  type="date" 
+                  className="px-3 py-2 bg-slate-50 rounded-xl text-sm font-black text-slate-600 outline-none focus:border-blue-500 border border-transparent"
+                  value={dateFilter.type === 'custom' ? dateFilter.specificDate : ''}
+                  onChange={(e) => { vibrate(); setDateFilter({type: 'custom', specificDate: e.target.value}); }}
+                  title="Filtro de Fecha Exacta"
+                />
               </div>
             </header>
           )}
 
           <div className="flex-1 overflow-y-auto p-4 md:p-8 lg:p-10 scroll-smooth">
-            <div className="max-w-7xl mx-auto h-full">
+            <div className="w-full h-full">
               {activeTab === 'panel' && renderDashboard()}
               {activeTab === 'mostrador' && renderMostrador()}
               {activeTab === 'ordenes' && renderOrdenes()}
@@ -905,7 +935,7 @@ function LavOSMain() {
 
         {/* --- TECLADO UNIVERSAL --- */}
         {numpad.isOpen && (
-          <div className="fixed inset-0 z-[1000] bg-slate-900/40 flex items-end md:items-center justify-center p-0 md:p-4 animate-in fade-in duration-200">
+          <div className="fixed inset-0 z-[2000] bg-slate-900/40 flex items-end md:items-center justify-center p-0 md:p-4 animate-in fade-in duration-200">
             <div className="bg-white w-full max-w-sm rounded-t-[2.5rem] md:rounded-[3rem] p-8 md:p-10 space-y-6 shadow-2xl animate-in slide-in-from-bottom-10 md:slide-in-from-bottom-0 md:zoom-in-95 duration-200">
               <div className="flex justify-between items-center"><h3 className="font-black text-slate-800 uppercase text-[10px] tracking-widest">Ingrese Valor Numérico</h3><button onClick={() => {vibrate(); setNumpad({isOpen:false, field:null, value:'', target: 'order'})}} className="bg-slate-100 p-3 rounded-full text-slate-400 active:scale-90 transition-transform"><Minus className="w-5 h-5"/></button></div>
               <div className="text-6xl font-black text-center py-6 bg-slate-50 rounded-[2rem] border-2 border-slate-100 text-slate-800 tracking-tighter num-font overflow-hidden whitespace-nowrap">{numpad.value || '0'}</div>
