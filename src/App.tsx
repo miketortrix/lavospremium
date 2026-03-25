@@ -3,7 +3,7 @@ import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { 
-  LayoutDashboard, Users, ClipboardList, Flame, Droplets, DollarSign, AlertCircle, Plus, CheckCircle, Trash2, Settings, BarChart3, PieChart, Search, Cloud, ChevronRight, Minus, LogOut, Lock, Store, ArrowUpCircle, ArrowDownCircle, MapPin, UserCheck, Package, ShoppingCart, ShoppingBag, Download, Edit
+  LayoutDashboard, Users, ClipboardList, Flame, Droplets, DollarSign, AlertCircle, Plus, CheckCircle, Trash2, Settings, BarChart3, PieChart, Search, Cloud, ChevronRight, Minus, LogOut, Lock, Store, ArrowUpCircle, ArrowDownCircle, MapPin, UserCheck, Package, ShoppingCart, ShoppingBag, Download, Edit, FileText
 } from 'lucide-react';
 
 const firebaseConfig = {
@@ -96,8 +96,7 @@ function LavOSMain() {
   const [activeInvTab, setActiveInvTab] = useState('insumos');
   const [activeGasTab, setActiveGasTab] = useState('activos');
   
-  // MODIFICACIÓN: Agregados modales para borrar transacciones y órdenes con seguridad
-  const [modals, setModals] = useState({ client: false, deliverOrder: false, employee: false, service: false, transaction: false, supply: false, gas: false, emptyGas: false, category: false, restockSupply: false, dryer: false, payGas: false, wipeData: false, editOrder: false, deleteTx: false, deleteOrder: false });
+  const [modals, setModals] = useState({ client: false, deliverOrder: false, employee: false, service: false, transaction: false, supply: false, gas: false, emptyGas: false, category: false, restockSupply: false, dryer: false, payGas: false, wipeData: false, editOrder: false, deleteTx: false, deleteOrder: false, viewOrder: false });
   const [uiError, setUiError] = useState('');
   const [uiSuccess, setUiSuccess] = useState('');
   const [numpad, setNumpad] = useState({ isOpen: false, field: null as any, value: '', target: 'order' });
@@ -121,7 +120,8 @@ function LavOSMain() {
     wipe: { confirmText: '' },
     editOrder: { id: null as any, manualPrice: '', bags: '', status: '' },
     deleteTx: { id: null as any },
-    deleteOrder: { order: null as any }
+    deleteOrder: { order: null as any },
+    viewOrder: null as any
   });
   const [orderForm, setOrderForm] = useState({ clientId: '', requestDate: getLocalDateString(), bags: '', serviceId: '', priority: 'Media', manualPrice: 0, receivedBy: '' });
 
@@ -252,11 +252,10 @@ function LavOSMain() {
     if (!order) return;
 
     if (order.status === 'Entregado' && newStatus !== 'Entregado') {
-      if (window.confirm("Esta orden ya fue entregada. Cambiar su estado a otra cosa eliminará el registro de efectivo en Movimientos y restará los ciclos de gas. ¿Continuar?")) {
-        revertOrderEffects(order);
-        setOrders(_orders.map(o => o.id === id ? { ...o, status: newStatus, isPaid: false, paidDate: null, deliveredBy: null, dryerCycles: null } : o));
-        showMsg("Ingreso eliminado y orden revertida", false);
-      }
+      // Reversión Automática al cambiar estado
+      revertOrderEffects(order);
+      setOrders(_orders.map(o => o.id === id ? { ...o, status: newStatus, isPaid: false, paidDate: null, deliveredBy: null, dryerCycles: null } : o));
+      showMsg("Ingreso eliminado y orden revertida", false);
     } else {
       setOrders(_orders.map(o => o.id === id ? { ...o, status: newStatus } : o)); 
     }
@@ -294,6 +293,21 @@ function LavOSMain() {
     
     if (modals.transaction) toggleModal('transaction');
     setForms(p => ({ ...p, transaction: { id: null, type: 'ENTRADA', amount: '', category: _txCategories.in[0] || '', desc: '', date: getLocalDateString() } }));
+  };
+
+  const handleViewTicket = (desc: string) => {
+    vibrate();
+    const match = desc.match(/Ticket #(\d+)/);
+    if(match && match[1]) {
+      const ticketId = match[1];
+      const order = _orders.find(o => o.id.toString().slice(-4) === ticketId);
+      if(order) {
+         setForms(p => ({...p, viewOrder: order}));
+         toggleModal('viewOrder');
+      } else {
+         showMsg("El ticket original ya no existe o fue eliminado");
+      }
+    }
   };
 
   const handleAddCategory = () => {
@@ -356,19 +370,43 @@ function LavOSMain() {
     showMsg("Bodega actualizada", false);
   };
 
+  // REPORTE CSV EMPRESARIAL Y PROFESIONAL
   const handleDownloadCSV = () => {
     vibrate();
-    const headers = ['Fecha', 'Tipo', 'Categoria', 'Monto', 'Descripcion'];
-    const rows = filteredTransactions.map(t => `${t.date},${t.type},${t.category},${t.amount},"${t.desc || ''}"`);
-    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows].join('\n');
-    const encodedUri = encodeURI(csvContent);
+    const totalIn = filteredTransactions.filter(t => t.type === 'ENTRADA').reduce((s,t) => s + t.amount, 0);
+    const totalOut = filteredTransactions.filter(t => t.type === 'SALIDA').reduce((s,t) => s + t.amount, 0);
+    const netProfit = totalIn - totalOut;
+
+    // BOM UTF-8 para que Excel y Numbers lean los acentos correctamente
+    let csvContent = '\uFEFF';
+    
+    // Cabecera Profesional
+    csvContent += "LAVANDERIA MORALES - ESTADO DE RESULTADOS\n";
+    csvContent += `Fecha de reporte:,${getLocalDateString()}\n\n`;
+    
+    csvContent += "RESUMEN FINANCIERO\n";
+    csvContent += `Ingresos Brutos:,Q${totalIn.toFixed(2)}\n`;
+    csvContent += `Gastos Operativos:,Q${totalOut.toFixed(2)}\n`;
+    csvContent += `Utilidad Neta:,Q${netProfit.toFixed(2)}\n\n`;
+    
+    csvContent += "DETALLE DE MOVIMIENTOS\n";
+    const headers = ['Fecha', 'Tipo', 'Categoria', 'Monto (Q)', 'Descripcion'];
+    csvContent += headers.join(',') + '\n';
+    
+    // Filas de datos
+    filteredTransactions.forEach(t => {
+      const safeDesc = t.desc ? t.desc.replace(/"/g, '""') : '';
+      csvContent += `${t.date},${t.type},${t.category},${t.amount},"${safeDesc}"\n`;
+    });
+
+    const encodedUri = encodeURI("data:text/csv;charset=utf-8," + csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `Reporte_LavOS_${getLocalDateString()}.csv`);
+    link.setAttribute("download", `Reporte_LavOS_Morales_${getLocalDateString()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    showMsg("Descargado correctamente", false);
+    showMsg("Reporte Profesional Descargado", false);
   };
 
   // ==========================================================
@@ -426,7 +464,7 @@ function LavOSMain() {
     const selectedClient = _clients.find(c => c.id === orderForm.clientId);
     
     return (
-      <div className="flex flex-col lg:flex-row gap-6 pb-40 md:pb-6 relative animate-in fade-in duration-300 w-full">
+      <div className="flex flex-col lg:flex-row gap-6 h-full pb-40 md:pb-6 relative animate-in fade-in duration-300 w-full">
         
         {/* COLUMNA 1: INFO Y CLIENTE */}
         <div className="w-full lg:w-1/3 flex flex-col gap-4">
@@ -488,7 +526,6 @@ function LavOSMain() {
                  <span className="text-4xl md:text-5xl font-black text-slate-800 num-font tracking-tighter truncate w-full text-center">{orderForm.bags || '0'}</span>
                </button>
                
-               {/* BOTÓN PRECIO HABILITADO PARA TODOS */}
                <button onClick={() => {vibrate(); setNumpad({isOpen: true, field: 'manualPrice', value: orderForm.manualPrice.toString(), target: 'order'})}} className="flex flex-col items-center justify-center p-6 rounded-[2rem] border-2 transition-colors min-w-0 bg-emerald-50 border-emerald-200 active:bg-emerald-100">
                  <span className="text-[10px] font-black text-emerald-600/70 uppercase tracking-widest mb-1 truncate w-full text-center">Precio Cobrado</span>
                  <span className="text-4xl md:text-5xl font-black text-emerald-600 num-font tracking-tighter truncate w-full text-center">Q{orderForm.manualPrice || '0'}</span>
@@ -536,9 +573,7 @@ function LavOSMain() {
 
             return (
               <div key={o.id} className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col relative overflow-hidden transition-all hover:shadow-lg">
-                {o.status === 'Entregado' && <div className="absolute top-0 right-0 bg-slate-100 text-slate-400 text-[10px] font-black px-4 py-2 rounded-bl-2xl">ENTREGADO</div>}
-                
-                <div className="flex justify-between items-start mb-6 gap-2 pr-16">
+                <div className="flex justify-between items-start mb-6 gap-2">
                   <div className="flex gap-2 flex-wrap items-center">
                     <span className={`px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-wider shrink-0 ${o.priority === 'Alta' ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-500'}`}>{o.priority}</span>
                     {activeOrderTab === 'activas' && (
@@ -549,8 +584,9 @@ function LavOSMain() {
                     {o.status === 'Entregado' && <span className="bg-emerald-100 text-emerald-700 px-3 py-1 rounded-xl text-[10px] font-black uppercase">Entregado</span>}
                   </div>
                   
+                  {/* MODIFICACIÓN: Íconos desplazados y limpios */}
                   {activeOrderTab === 'historial' && currentUser?.role === 'admin' && (
-                    <div className="absolute top-3 right-3 flex gap-2 shrink-0">
+                    <div className="flex gap-1 shrink-0">
                       <button onClick={() => { setForms(p => ({...p, editOrder: { id: o.id, manualPrice: o.total, bags: o.bags, status: o.status }})); toggleModal('editOrder'); }} className="p-2 bg-slate-50 rounded-lg text-slate-500 hover:text-blue-500 active:scale-90 transition-transform"><Edit className="w-4 h-4"/></button>
                       <button onClick={() => { vibrate(); setForms(p => ({...p, deleteOrder: { order: o }})); toggleModal('deleteOrder'); }} className="p-2 bg-rose-50 rounded-lg text-rose-500 hover:bg-rose-100 active:scale-90 transition-transform"><Trash2 className="w-4 h-4"/></button>
                     </div>
@@ -623,23 +659,30 @@ function LavOSMain() {
                    <span className="text-base md:text-lg num-font break-all">Q{formatMoney(totalIn)}</span>
                 </div>
                 <div className="divide-y border-t-0 flex-1">
-                   {filteredTransactions.filter(t => t.type === 'ENTRADA').map(t => (
-                     <div key={t.id} className="p-6 flex justify-between items-center hover:bg-slate-50 transition-colors gap-4">
-                       <div className="min-w-0 flex-1">
-                         <p className="font-black text-slate-800 text-lg leading-tight truncate">{t.category}</p>
-                         <p className="text-xs font-bold text-slate-400 mt-1 truncate">{t.desc || 'Cobro automático'}</p>
-                       </div>
-                       <div className="flex items-center gap-3 shrink-0">
-                         <p className="text-xl md:text-2xl font-black text-emerald-600 num-font">+Q{formatMoney(t.amount)}</p>
-                         {currentUser?.role === 'admin' && (
-                           <div className="flex gap-1">
-                             <button onClick={() => {setForms(p => ({...p, transaction: { id: t.id, type: t.type, amount: t.amount.toString(), category: t.category, desc: t.desc || '', date: t.date }})); toggleModal('transaction');}} className="p-2 text-slate-400 hover:text-blue-500 active:scale-90"><Edit className="w-4 h-4"/></button>
-                             <button onClick={() => {vibrate(); setForms(p => ({...p, deleteTx: { id: t.id }})); toggleModal('deleteTx');}} className="p-2 text-slate-400 hover:text-rose-500 active:scale-90"><Trash2 className="w-4 h-4"/></button>
+                   {filteredTransactions.filter(t => t.type === 'ENTRADA').map(t => {
+                     // MODIFICACIÓN: Hacer clickeable si es un Ticket
+                     const isTicket = t.desc && t.desc.includes('Ticket #');
+                     return (
+                       <div key={t.id} className="p-6 flex justify-between items-center hover:bg-slate-50 transition-colors gap-4">
+                         <div className="min-w-0 flex-1">
+                           <div className={`flex items-center gap-2 ${isTicket ? 'cursor-pointer hover:opacity-70' : ''}`} onClick={() => isTicket && handleViewTicket(t.desc)}>
+                             <p className="font-black text-slate-800 text-lg leading-tight truncate">{t.category}</p>
+                             {isTicket && <span className="bg-blue-100 text-blue-600 text-[9px] px-2 py-1 rounded-md font-black uppercase tracking-widest shrink-0">Ver Orden</span>}
                            </div>
-                         )}
+                           <p className="text-xs font-bold text-slate-400 mt-1 truncate">{t.desc || 'Cobro automático'}</p>
+                         </div>
+                         <div className="flex items-center gap-3 shrink-0">
+                           <p className="text-xl md:text-2xl font-black text-emerald-600 num-font">+Q{formatMoney(t.amount)}</p>
+                           {currentUser?.role === 'admin' && (
+                             <div className="flex gap-1">
+                               <button onClick={() => {setForms(p => ({...p, transaction: { id: t.id, type: t.type, amount: t.amount.toString(), category: t.category, desc: t.desc || '', date: t.date }})); toggleModal('transaction');}} className="p-2 text-slate-400 hover:text-blue-500 active:scale-90"><Edit className="w-4 h-4"/></button>
+                               <button onClick={() => {vibrate(); setForms(p => ({...p, deleteTx: { id: t.id }})); toggleModal('deleteTx');}} className="p-2 text-slate-400 hover:text-rose-500 active:scale-90"><Trash2 className="w-4 h-4"/></button>
+                             </div>
+                           )}
+                         </div>
                        </div>
-                     </div>
-                   ))}
+                     );
+                   })}
                    {filteredTransactions.filter(t => t.type === 'ENTRADA').length === 0 && <p className="p-8 text-center text-slate-400 font-bold">Sin ingresos registrados</p>}
                 </div>
               </div>
@@ -689,7 +732,7 @@ function LavOSMain() {
          <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-6 md:p-8 rounded-[2.5rem] border border-slate-100 shadow-sm gap-6">
             <div><h3 className="text-2xl font-black text-slate-800 tracking-tight">Estado de Resultados</h3><p className="text-sm font-bold text-slate-400 mt-1">Rentabilidad y desglose por categorías.</p></div>
             <button onClick={handleDownloadCSV} className="w-full md:w-auto bg-emerald-600 hover:bg-emerald-500 text-white px-8 py-4 rounded-2xl font-black active:scale-95 transition-transform shadow-lg shadow-emerald-200 flex items-center justify-center shrink-0">
-              <Download className="w-5 h-5 mr-2 shrink-0" /> Exportar CSV
+              <Download className="w-5 h-5 mr-2 shrink-0" /> Generar Excel (Reporte)
             </button>
          </div>
 
@@ -1060,6 +1103,34 @@ function LavOSMain() {
         )}
 
         {/* --- MODALES --- */}
+        {modals.viewOrder && forms.viewOrder && (() => {
+          const o = forms.viewOrder;
+          const client = _clients.find(c => c.id === o.clientId);
+          const service = _servicesConfig.find(s => s.id === o.serviceId);
+          const receiver = _employees.find(e => e.id === parseInt(o.receivedBy))?.name || 'N/A';
+          const deliverer = o.deliveredBy ? _employees.find(e => e.id === parseInt(o.deliveredBy))?.name || 'N/A' : 'N/A';
+
+          return (
+            <div className="fixed inset-0 z-[1000] bg-slate-900/40 flex items-end md:items-center justify-center p-0 md:p-4 animate-in fade-in duration-200">
+              <div className="bg-white w-full max-w-md rounded-t-[2.5rem] md:rounded-[3rem] p-8 md:p-10 space-y-6 shadow-2xl animate-in slide-in-from-bottom-10 md:zoom-in-95">
+                <h3 className="text-3xl font-black text-slate-800 tracking-tight flex items-center"><ClipboardList className="w-8 h-8 mr-3 text-blue-600"/> Detalle de Orden</h3>
+                <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100 space-y-4">
+                  <p className="flex justify-between items-center"><span className="text-slate-400 font-bold text-sm uppercase tracking-widest">Ticket:</span><span className="font-black text-slate-700 text-xl bg-white px-3 py-1 rounded-xl shadow-sm">#{o.id.toString().slice(-4)}</span></p>
+                  <p className="flex justify-between"><span className="text-slate-400 font-bold">Cliente:</span><span className="font-black text-slate-700 truncate max-w-[60%] text-right">{client?.name || 'Desconocido'}</span></p>
+                  <p className="flex justify-between"><span className="text-slate-400 font-bold">Servicio:</span><span className="font-black text-blue-600 truncate max-w-[60%] text-right">{service?.name || 'Desconocido'}</span></p>
+                  <p className="flex justify-between"><span className="text-slate-400 font-bold">Bolsas/Pzas:</span><span className="font-black text-slate-700">{o.bags}</span></p>
+                  <p className="flex justify-between items-center"><span className="text-slate-400 font-bold">Cobrado:</span><span className="font-black text-emerald-600 text-2xl num-font">Q{formatMoney(o.total)}</span></p>
+                  <div className="h-px w-full bg-slate-200 my-2"></div>
+                  <p className="flex justify-between"><span className="text-slate-400 font-bold">Ingreso:</span><span className="font-black text-slate-700">{o.requestDate}</span></p>
+                  <p className="flex justify-between"><span className="text-slate-400 font-bold">Recibió:</span><span className="font-black text-slate-700">{receiver}</span></p>
+                  <p className="flex justify-between"><span className="text-slate-400 font-bold">Entregó:</span><span className="font-black text-slate-700">{deliverer}</span></p>
+                </div>
+                <button onClick={() => toggleModal('viewOrder')} className="w-full py-5 font-black bg-slate-900 text-white rounded-2xl active:scale-95 shadow-lg transition-transform">Cerrar Detalles</button>
+              </div>
+            </div>
+          );
+        })()}
+
         {modals.transaction && (
           <div className="fixed inset-0 z-[1000] bg-slate-900/40 flex items-end md:items-center justify-center p-0 md:p-4 animate-in fade-in duration-200">
             <div className="bg-white w-full max-w-md rounded-t-[2.5rem] md:rounded-[3rem] p-8 md:p-10 space-y-6 shadow-2xl animate-in slide-in-from-bottom-10 md:zoom-in-95">
@@ -1084,7 +1155,6 @@ function LavOSMain() {
           </div>
         )}
 
-        {/* MODIFICACIÓN: Modales de borrado blindados (Evitan fallos en iOS/PWA) */}
         {modals.deleteTx && (
           <div className="fixed inset-0 z-[1000] bg-slate-900/40 flex items-end md:items-center justify-center p-0 md:p-4 animate-in fade-in duration-200">
             <div className="bg-white w-full max-w-md rounded-t-[2.5rem] md:rounded-[3rem] p-8 md:p-10 space-y-6 shadow-2xl animate-in slide-in-from-bottom-10 md:zoom-in-95 border-2 border-rose-100">
