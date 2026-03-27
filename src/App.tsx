@@ -585,8 +585,8 @@ function LavOSMain() {
                   </div>
                   
                   {/* MODIFICACIÓN: Íconos desplazados y limpios */}
-                  {activeOrderTab === 'historial' && currentUser?.role === 'admin' && (
-                    <div className="flex gap-1 shrink-0">
+                  {currentUser?.role === 'admin' && (
+                    <div className="absolute top-3 right-3 flex gap-2 shrink-0">
                       <button onClick={() => { setForms(p => ({...p, editOrder: { id: o.id, manualPrice: o.total, bags: o.bags, status: o.status }})); toggleModal('editOrder'); }} className="p-2 bg-slate-50 rounded-lg text-slate-500 hover:text-blue-500 active:scale-90 transition-transform"><Edit className="w-4 h-4"/></button>
                       <button onClick={() => { vibrate(); setForms(p => ({...p, deleteOrder: { order: o }})); toggleModal('deleteOrder'); }} className="p-2 bg-rose-50 rounded-lg text-rose-500 hover:bg-rose-100 active:scale-90 transition-transform"><Trash2 className="w-4 h-4"/></button>
                     </div>
